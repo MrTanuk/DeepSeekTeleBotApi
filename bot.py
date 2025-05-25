@@ -10,18 +10,22 @@ import api_video
 
 # ========== Initial configuration ==========
 app = Flask(__name__)
-SYSTEM_MESSAGE = "You are a professional telegram bot to help people. Answer briefly"
 
 # ========== Bot config ==========
 load_dotenv()
 # In a futere, with DB to respond all the answer made by the bot
 response_history = {}
 
-PROVIDER = os.getenv("PROVIDER")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BOT_NAME = os.getenv("BOT_NAME")
+
+PROVIDER = os.getenv("PROVIDER")
 API_TOKEN = os.getenv("API_TOKEN")
 LLM_MODEL = os.getenv("LLM_MODEL")
+
+MAX_OUTPUT_TOKENS = os.getenv("MAX_OUTPUT_TOKENS")
+SYSTEM_MESSAGE = os.getenv("SYSTEM_MESSAGE")
+
 if PROVIDER == "google":
     API_URL = f"{os.getenv('API_URL')}/{str(LLM_MODEL)}:generateContent?key={str(API_TOKEN)}"
 else:
@@ -93,10 +97,8 @@ def use_get_api_llm(message, user_text, is_group=False, is_reply=False):
         response_history[user_key]['conversation'].append({"role": "user", "content": user_text})
 
         # Maintain conversation history limit
-        MAX_HISTORY = 15
+        MAX_HISTORY = 25
         response_history[user_key]['conversation'] = response_history[user_key]['conversation'][-MAX_HISTORY:]
-
-        MAX_OUTPUT_TOKENS = 349
 
         # Generate AI response using current conversation context
         ai_response = api_llm.get_api_llm(
@@ -130,7 +132,7 @@ def setup_bot_handlers():
         telebot.types.BotCommand("/help", "Show all commands"),
         telebot.types.BotCommand("/ask", "Ask something"),
         telebot.types.BotCommand("/new", "Clear the historial"),
-        telebot.types.BotCommand("/dl", "Download videos from Facebook and Instagram")
+        telebot.types.BotCommand("/dl", "Download videos from Facebook, Instagram and TikTok")
     ])
 
     # Handler to /start
@@ -185,7 +187,7 @@ def setup_bot_handlers():
             if "Parameter not found" in str(e):
                 return bot.reply_to(message, str(e))
             elif "list index out" in str(e):
-                return bot.reply_to(message, "You must send a command followed by a URL:\n\n/dl https://www.instagram.com/reel/...")
+                return bot.reply_to(message, "You must send a command followed by a URL:\n\n/dl https://www.facebook.com/..")
             bot.reply_to(message, str(e))
 
         except (ValueError, Exception) as ve:
@@ -273,7 +275,7 @@ def webhook():
 # ========== Entry point =========
 
 if __name__ == '__main__':
-    if os.environ.get('HOSTING'):
+    if os.environ.get('HOSTING') == "production":
         from waitress import serve
         bot.remove_webhook()
         bot.set_webhook(url=WEBHOOK_URL + '/webhook')
