@@ -1,24 +1,29 @@
-from sys import exc_info
 import requests
 import logging
 from requests.exceptions import RequestException
 
 logger = logging.getLogger(__name__)
 
-def is_env_exist(API_TOKEN, API_URL, LLM_MODEL, PROVIDER):
-    if None in (API_TOKEN, API_URL, LLM_MODEL, PROVIDER):
-        return True
-    return False
+def is_env_exist(*args):
+    return any(arg is None for arg in args)
 
 def parse_response(response: dict, provider: str) -> str:
     provider = provider.lower()
-    if provider in ("openai", "deepseek"):
-        return response['choices'][0]['message']['content']
-    elif provider == "google":
-        return response['candidates'][0]['content']['parts'][0]['text']
-    return str(response)
+    try:
+        if provider in ("openai", "deepseek"):
+            return response['choices'][0]['message']['content']
+        elif provider == "google":
+            return response['candidates'][0]['content']['parts'][0]['text']
+        raise KeyError(f"Unknown provider on parse_mode: {provider}")
+    except (KeyError, IndexError) as e:
+        logger.error("Error parsing API response: %s. Received response: %s", e, response)
+        error_detail = response.get("error", {}).get("message", "Estructura de respuesta inesperada.")
+        raise RuntimeError(f"Error processing API response.: {error_detail}")
 
-def get_api_llm(messages, API_TOKEN, API_URL, LLM_MODEL, PROVIDER, MAX_OUTPUT_TOKENS=2048):
+def get_api_llm(messages, API_TOKEN, API_URL, LLM_MODEL, PROVIDER, MAX_OUTPUT_TOKENS=800):
+    if is_env_exist(API_TOKEN, API_URL, LLM_MODEL, PROVIDER):
+        raise ValueError("Missing some value of a key on .env. Check it")
+
     # Provider configuration mapping
     provider_config = {
         "openai": {
@@ -45,7 +50,7 @@ def get_api_llm(messages, API_TOKEN, API_URL, LLM_MODEL, PROVIDER, MAX_OUTPUT_TO
                     for msg in messages
                 ],
                 "generationConfig": {
-                "maxOutputTokens": MAX_OUTPUT_TOKENS,
+                "maxOutputTokens": int(MAX_OUTPUT_TOKENS),
                 "temperature": 0.9,
                 "topP": 1
                 }
@@ -66,9 +71,6 @@ def get_api_llm(messages, API_TOKEN, API_URL, LLM_MODEL, PROVIDER, MAX_OUTPUT_TO
             }
         }
     }
-    
-    if is_env_exist(API_TOKEN, API_URL, LLM_MODEL, PROVIDER):
-        return "Missing some value of a key. Check it"
 
     try:
         config = provider_config[PROVIDER.lower()]
@@ -80,7 +82,7 @@ def get_api_llm(messages, API_TOKEN, API_URL, LLM_MODEL, PROVIDER, MAX_OUTPUT_TO
             API_URL,
             json=config["data"],
             headers=config["headers"],
-            timeout=15,
+            timeout=25,
         )
         response.raise_for_status()
         return parse_response(response.json(), PROVIDER)
@@ -102,6 +104,6 @@ def get_api_llm(messages, API_TOKEN, API_URL, LLM_MODEL, PROVIDER, MAX_OUTPUT_TO
         
         logger.error("Connection error on API LLM %s", str(e), exc_info=True)
         raise ConnectionError(error_message) from e
-    except Exception as e:
+    except (RuntimeError, ValueError, KeyError) as e:
         logger.error("Unexpected error on API LLM %s", str(e), exc_info=True)
-        raise RuntimeError(f"🚨 Unexpected error: {str(e)}") from e
+        raise e

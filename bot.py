@@ -17,13 +17,12 @@ load_dotenv()
 response_history = {}
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-BOT_NAME = os.getenv("BOT_NAME")
 
 PROVIDER = os.getenv("PROVIDER")
 API_TOKEN = os.getenv("API_TOKEN")
 LLM_MODEL = os.getenv("LLM_MODEL")
 
-MAX_OUTPUT_TOKENS = os.getenv("MAX_OUTPUT_TOKENS")
+MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", 800))
 SYSTEM_MESSAGE = os.getenv("SYSTEM_MESSAGE")
 
 if PROVIDER == "google":
@@ -34,10 +33,14 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 bot = telebot.TeleBot(str(BOT_TOKEN))
 bot_user_id = bot.get_me().id
+BOT_NAME = bot.get_me().username
 
 def is_valid_command(message):
     """This is for differentiate the commands that has the same names of others bots in the same group, so in group is used complete command, and private can be both"""
     command = telebot.util.extract_command(message.text)
+    if not command:
+        return False
+
     user_command = message.text.partition(' ')[0].replace('/', '')
     complete_command = f'{command}@{BOT_NAME}'
 
@@ -61,10 +64,10 @@ def extract_question(message):
     
     return question
 
-def use_get_api_llm(message, user_text, is_group=False, is_reply=False):
+def use_get_api_llm(message, user_text, is_group=False):
     try:
         # Handle group replies without proper command
-        if is_group and is_reply and (not message.text.startswith('/ask') and (f'/ask@{BOT_NAME}' in message.text or not f'@{BOT_NAME}' in message.text)):
+        if is_group and f'@{BOT_NAME}' not in message.text and not message.text.startswith('/'):
             return None
         
         bot.send_chat_action(message.chat.id, "typing")
@@ -114,16 +117,16 @@ def use_get_api_llm(message, user_text, is_group=False, is_reply=False):
         bot.reply_to(message, ai_response, parse_mode="markdown")
         response_history[user_key]['conversation'].append({"role": "assistant", "content": ai_response})
 
-    except KeyError as e:
-        bot.reply_to(message, "Configuration error, try again.")
-    except ConnectionError as e:
+    except (KeyError, ValueError, ConnectionError, RuntimeError) as e:
         bot.reply_to(message, str(e))
     except telebot.apihelper.ApiTelegramException as e:
         if "Can't find end of the entity starting" in str(e):
+            # Si Markdown falla, envía el texto plano.
             return bot.reply_to(message, ai_response)
         raise
     except Exception as e:
-        bot.reply_to(message, f"Unexpected error, Try again.")
+        logging.error("Unexpected error on use_get_api_llm: %s", e, exc_info=True)
+        bot.reply_to(message, f"🚨 Unexpected error. Try again.")
 
 def setup_bot_handlers():
     # Config commands
@@ -207,24 +210,24 @@ def setup_bot_handlers():
 
     # Handler to /ask in private, group
     @bot.message_handler(commands=["ask", f"ask@{BOT_NAME}"], chat_types=["group", "supergroup"], content_types=["text"])
-    @bot.message_handler(chat_types=["private"], content_types=["text"])
-    def handle_all_question(message):
+    def handle_all_question_group(message):
+        if not is_valid_command(message):
+            return None
         question = extract_question(message.text)
         if not question:
             return bot.reply_to(message, "Use: /ask [your question]")
-
-        if message.chat.type in ["group", "supergroup"]:
-            if not is_valid_command(message):
-                return None
+        else:
             use_get_api_llm(message, question, is_group=True)
+
+
+    @bot.message_handler(commands=["ask", f"ask@{BOT_NAME}"], chat_types=["private"], content_types=["text"])
+    @bot.message_handler(chat_types=["private"], content_types=["text"])
+    def handle_all_question_private(message):
+        question = extract_question(message.text)
+        if not question:
+            bot.reply_to(message, "Use: /ask [your question]")
         else:
             use_get_api_llm(message, question)
-
-    # Handler to reply in private, group
-    @bot.message_handler(func=lambda m: m.reply_to_message and m.reply_to_message.from_user.id == bot_user_id, chat_types=["private","group", "supergroup"], content_types=["text"])
-    def handle_reply(message):
-        is_group = message.chat.type in ["group", "supergroup"]
-        use_get_api_llm(message, message.text, is_group=is_group, is_reply=True)
 
     @bot.message_handler(content_types=['new_chat_members'])
     def handle_new_users(message):
@@ -275,6 +278,7 @@ def webhook():
 # ========== Entry point =========
 
 if __name__ == '__main__':
+    
     if os.environ.get('HOSTING') == "production":
         from waitress import serve
         bot.remove_webhook()
