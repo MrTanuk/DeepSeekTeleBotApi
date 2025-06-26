@@ -26,3 +26,6 @@ __pycache__/
 
 *.log
 *.cache
+
+
+cookies.txt

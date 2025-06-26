@@ -4,3 +4,4 @@ python-dotenv==1.0.0
 requests==2.32.3
 waitress==3.0.0
 yt-dlp==2025.3.31
+supabase==2.16.0
